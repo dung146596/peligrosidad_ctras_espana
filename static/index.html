@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DGT - Mapa de Riesgo Vial y Analizador de Rutas</title>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .panel-rutas {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 320px;
+        }
+
+        .panel-rutas h2 { margin-top: 0; font-size: 18px; color: #333; }
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 4px; color: #555; }
+        .input-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+
+        button {
+            width: 100%;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background-color: #004c99; }
+
+        #resumen-ruta {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            display: none;
+        }
+
+        .metric-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+            font-size: 12px;
+        }
+
+        .riesgo-Bajo { background-color: #2e7d32; }
+        .riesgo-Medio { background-color: #f57c00; }
+        .riesgo-Alto { background-color: #c62828; }
+    </style>
+</head>
+<body>
+
+<div class="panel-rutas">
+    <h2>🗺️ Analizador de Rutas DGT</h2>
+    <div class="input-group">
+        <label>Origen</label>
+        <input type="text" id="origen" placeholder="Ej: Madrid" value="Madrid">
+    </div>
+    <div class="input-group">
+        <label>Destino</label>
+        <input type="text" id="destino" placeholder="Ej: Valencia" value="Valencia">
+    </div>
+    <button onclick="calcularRuta()">Calcular y Analizar Riesgo</button>
+
+    <div id="resumen-ruta">
+        <h3>Resultado del Análisis</h3>
+        <p>Nivel de Riesgo: <span id="badge-riesgo" class="metric-badge"></span></p>
+        <p>⚠️ Accidentes cercanos: <strong id="val-accidentes">0</strong></p>
+        <p>💀 Fallecidos: <strong id="val-fallecidos">0</strong></p>
+        <p>🏥 Heridos Graves: <strong id="val-graves">0</strong></p>
+        <p>📊 Índice de Riesgo: <strong id="val-indice">0</strong></p>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        center: [-3.7037, 40.4167],
+        zoom: 6
+    });
+
+    map.on('load', () => {
+        // Mapa de calor
+        map.addSource('accidentes', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        map.addLayer({
+            id: 'accidentes-heat',
+            type: 'heatmap',
+            source: 'accidentes',
+            paint: {
+                'heatmap-weight': ['get', 'weight'],
+                'heatmap-intensity': 1,
+                'heatmap-color': [
+                    'interpolate', ['linear'], ['heatmap-density'],
+                    0, 'rgba(0, 255, 0, 0)',
+                    0.2, 'rgb(255, 255, 0)',
+                    0.6, 'rgb(255, 128, 0)',
+                    1, 'rgb(255, 0, 0)'
+                ],
+                'heatmap-radius': 15
+            }
+        });
+
+        // Capa para trazar la línea de la ruta
+        map.addSource('ruta-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        map.addLayer({
+            id: 'layer-ruta',
+            type: 'line',
+            source: 'ruta-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+                'line-color': '#0066ff',
+                'line-width': 5,
+                'line-opacity': 0.8
+            }
+        });
+
+        map.on('moveend', actualizarMapaCalor);
+        actualizarMapaCalor();
+    });
+
+    async function actualizarMapaCalor() {
+        const bounds = map.getBounds();
+        const url = `/api/v1/accidentes/bbox?min_lon=${bounds.getWest()}&min_lat=${bounds.getSouth()}&max_lon=${bounds.getEast()}&max_lat=${bounds.getNorth()}`;
+        
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (map.getSource('accidentes')) {
+                map.getSource('accidentes').setData(data);
+            }
+        } catch (err) {
+            console.error("Error al cargar accidentes:", err);
+        }
+    }
+
+    async function geocodificar(lugar) {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(lugar + ', España')}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data && data.length > 0) {
+            return [parseFloat(data[0].lon), parseFloat(data[0].lat)];
+        }
+        throw new Error(`No se pudo encontrar el lugar: ${lugar}`);
+    }
+
+    async function calcularRuta() {
+        const txtOrigen = document.getElementById('origen').value;
+        const txtDestino = document.getElementById('destino').value;
+
+        try {
+            // 1. Obtener Coordenadas de Origen y Destino
+            const coordsOrigen = await geocodificar(txtOrigen);
+            const coordsDestino = await geocodificar(txtDestino);
+
+            // 2. Trazar ruta mediante OSRM
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsOrigen[0]},${coordsOrigen[1]};${coordsDestino[0]},${coordsDestino[1]}?overview=full&geometries=geojson`;
+            const osrmRes = await fetch(osrmUrl);
+            const osrmData = await osrmRes.json();
+
+            if (!osrmData.routes || osrmData.routes.length === 0) {
+                alert("No se pudo encontrar una ruta entre ambos puntos.");
+                return;
+            }
+
+            const routeGeoJSON = osrmData.routes[0].geometry;
+
+            // 3. Dibujar ruta en el mapa
+            map.getSource('ruta-source').setData({
+                type: 'Feature',
+                geometry: routeGeoJSON
+            });
+
+            // Ajustar vista del mapa a la ruta
+            const coords = routeGeoJSON.coordinates;
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            map.fitBounds([
+                [Math.min(...lons), Math.min(...lats)],
+                [Math.max(...lons), Math.max(...lats)]
+            ], { padding: 50 });
+
+            // 4. Analizar Riesgo con nuestro Backend
+            const backendRes = await fetch('/api/v1/rutas/analizar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ coordinates: coords })
+            });
+
+            const resultado = await backendRes.json();
+            const resumen = resultado.resumen;
+
+            // 5. Mostrar Resumen en el Panel (Ajustado a los nuevos campos de la API)
+            document.getElementById('val-accidentes').innerText = resumen.total_accidentes_acumulados || 0;
+            document.getElementById('val-fallecidos').innerText = resumen.fallecidos_acumulados || 0;
+            document.getElementById('val-graves').innerText = resumen.heridos_graves_acumulados || 0;
+            document.getElementById('val-indice').innerText = resumen.indice_riesgo_anual_promedio || 0;
+
+            const badge = document.getElementById('badge-riesgo');
+            badge.innerText = resumen.nivel_riesgo;
+            badge.className = `metric-badge riesgo-${resumen.nivel_riesgo}`;
+
+            document.getElementById('resumen-ruta').style.display = 'block';
+
+        } catch (err) {
+            alert(err.message || "Error al calcular la ruta.");
+            console.error(err);
+        }
+    }
+</script>
+
+</body>
+</html>

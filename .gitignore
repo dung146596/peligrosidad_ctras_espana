@@ -1,0 +1,20 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Variables de entorno con claves privadas o DSN
+.env
+
+# Archivos de datos muy pesados (CSV y GeoPackage)
+*.csv
+*.gpkg
+geopackage/
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+
+# Archivos de configuración de IDEs
+.vscode/
+.idea/
