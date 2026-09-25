@@ -84,15 +84,28 @@ Este proyecto hace uso de datos abiertos, APIS y servicios públicos proporciona
 2. **Iniciar la DB PostGIS:**
     ```bash
     docker compose up -d
+
+3. **Descargar y meter archivos de datos:**
+    Omitidos en el repo por cuestiones de tamaño de ficheros.
     
-3. **Instalar dependencias de Python:**
+    Capa Geográfica de la Red Viaria (IGN / CNIG):
+    * **Fuente:** Centro de Descargas del CNIG ([cnig.es](https://www.cnig.es/)).
+    * **Producto:** Red Transportes (Información Geográfica de Referencia).
+    * **Archivo requerido:** Descargar la capa en formato GeoPackage y renombrarla o colocarla en la raíz del proyecto con el nombre **`rt_viaria.gpkg`**. Debe contener la capa vectorial `rt_ppkk_p` (Puntos Kilométricos).
+
+    Microdatos de Accidentes de Tráfico (DGT):
+    * **Fuente:** Portal de Microdatos de la DGT ([dgt.es](https://www.dgt.es/)).
+    * **Producto:** Tablas anuales de *Accidentes con Víctimas*.
+    * **Archivos requeridos:** Descargar los archivos XLSX y convertir a CSV, guardándolos como TABLA_ACCIDENTES_20.csv, ..., TABLA_ACCIDENTES_24.csv.
+
+4. **Instalar dependencias de Python:**
     ```bash
     pip install -r requirements.txt
-4. **Ejecutar el proceso de ingesta:**
+5. **Ejecutar el proceso de ingesta:**
     ```bash
     python ingest_dgt.py
 
-5. **Iniciar la aplicación:**
+6. **Iniciar la aplicación:**
     ```bash
     uvicorn main:app --reload
 Accede a la aplicación en http://localhost:8000.
