@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DGT - Mapa de Riesgo Vial y Analizador de Rutas</title>
+    <title>Mapa de Riesgo Vial y Analizador de Rutas</title>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <style>
@@ -65,7 +65,8 @@
 <body>
 
 <div class="panel-rutas">
-    <h2>🗺️ Analizador de Rutas DGT</h2>
+    <h2>🗺️ ¿Es mi ruta diaria un punto negro?</h2>
+    <p>Aplicación para la estimación del riesgo en las carreteras españolas. Datos de siniestralidad de la DGT (2020-2024).</p>
     <div class="input-group">
         <label>Origen</label>
         <input type="text" id="origen" placeholder="Ej: Madrid" value="Madrid">
@@ -82,7 +83,8 @@
         <p>⚠️ Accidentes cercanos: <strong id="val-accidentes">0</strong></p>
         <p>💀 Fallecidos: <strong id="val-fallecidos">0</strong></p>
         <p>🏥 Heridos Graves: <strong id="val-graves">0</strong></p>
-        <p>📊 Índice de Riesgo: <strong id="val-indice">0</strong></p>
+        <p>🚗 Causa Principal: <strong id="val-causa">-</strong></p>
+        <p>📊 Índice de Riesgo Anual: <strong id="val-indice">0</strong></p>
     </div>
 </div>
 
@@ -97,27 +99,46 @@
     });
 
     map.on('load', () => {
-        // Mapa de calor
+        // Fuente GeoJSON de accidentes
         map.addSource('accidentes', {
             type: 'geojson',
             data: { type: 'FeatureCollection', features: [] }
         });
 
+        // Capa de Mapa de Calor optimizada para continuidad y rango visual amplio
         map.addLayer({
             id: 'accidentes-heat',
             type: 'heatmap',
             source: 'accidentes',
             paint: {
-                'heatmap-weight': ['get', 'weight'],
-                'heatmap-intensity': 1,
+                // Aumentar el peso dinámico basado en la severidad del accidente
+                'heatmap-weight': [
+                    'interpolate', ['linear'], ['get', 'weight'],
+                    0, 0,
+                    20, 1
+                ],
+                // Intensidad adaptativa al nivel de zoom
+                'heatmap-intensity': [
+                    'interpolate', ['linear'], ['zoom'],
+                    5, 0.8,
+                    12, 1.8
+                ],
+                // Rampa de color fluida con transición hacia el verde en zonas de baja influencia
                 'heatmap-color': [
                     'interpolate', ['linear'], ['heatmap-density'],
-                    0, 'rgba(0, 255, 0, 0)',
-                    0.2, 'rgb(255, 255, 0)',
-                    0.6, 'rgb(255, 128, 0)',
-                    1, 'rgb(255, 0, 0)'
+                    0, 'rgba(0, 0, 0, 0)',
+                    0.1, 'rgba(46, 204, 113, 0.45)',  // Verde suave para continuidad vial
+                    0.35, 'rgba(241, 196, 15, 0.75)',  // Amarillo
+                    0.65, 'rgba(230, 126, 34, 0.85)',  // Naranja
+                    1.0, 'rgba(231, 76, 60, 0.95)'     // Rojo intenso
                 ],
-                'heatmap-radius': 15
+                // Radio amplio y dependiente del zoom para unir puntos en un trazado térmico continuo
+                'heatmap-radius': [
+                    'interpolate', ['linear'], ['zoom'],
+                    4, 12,
+                    8, 22,
+                    14, 42
+                ]
             }
         });
 
@@ -214,10 +235,11 @@
             const resultado = await backendRes.json();
             const resumen = resultado.resumen;
 
-            // 5. Mostrar Resumen en el Panel (Ajustado a los nuevos campos de la API)
+            // 5. Mostrar Resumen en el Panel
             document.getElementById('val-accidentes').innerText = resumen.total_accidentes_acumulados || 0;
             document.getElementById('val-fallecidos').innerText = resumen.fallecidos_acumulados || 0;
             document.getElementById('val-graves').innerText = resumen.heridos_graves_acumulados || 0;
+            document.getElementById('val-causa').innerText = resumen.causa_principal || 'No especificada';
             document.getElementById('val-indice').innerText = resumen.indice_riesgo_anual_promedio || 0;
 
             const badge = document.getElementById('badge-riesgo');

@@ -6,13 +6,36 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import asyncpg
-from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
 
 load_dotenv()
 
 DB_DSN = os.getenv("DB_DSN", "postgresql://postgres:postgrespassword@localhost:5432/dgt_risk_db")
+
+# Mapeo oficial de códigos de tipo de accidente DGT
+TIPO_ACCIDENTE_MAP = {
+    "1": "Frontal",
+    "2": "Fronto-lateral",
+    "3": "Lateral",
+    "4": "Por alcance",
+    "5": "Múltiple o en caravana",
+    "6": "Colisión contra obstáculo",
+    "7": "Atropello a personas",
+    "8": "Atropello a animales",
+    "9": "Vuelco",
+    "10": "Caída",
+    "11": "Sólo salida de la vía",
+    "12": "Salida por la izquierda con colisión",
+    "13": "Salida por la izquierda con despeñamiento",
+    "14": "Salida por la izquierda con vuelco",
+    "15": "Salida por la izquierda (otro)",
+    "16": "Salida por la derecha con colisión",
+    "17": "Salida por la derecha con despeñamiento",
+    "18": "Salida por la derecha con vuelco",
+    "19": "Salida por la derecha (otro)",
+    "20": "Otro tipo de accidente"
+}
 
 app = FastAPI(title="API de Riesgo DGT")
 
@@ -26,49 +49,50 @@ app.add_middleware(
 # Servir archivos estáticos del frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
 @app.on_event("startup")
 async def init_db():
-    """Crea la tabla de accidentes si no existe e inserta datos de prueba si está vacía."""
+    """Crea la tabla de accidentes e índices en PostGIS si no existen."""
     conn = await asyncpg.connect(DB_DSN)
     
-    # Crear extensión PostGIS y tabla
     await conn.execute("""
         CREATE EXTENSION IF NOT EXISTS postgis;
         
         CREATE TABLE IF NOT EXISTS accidentes (
             id SERIAL PRIMARY KEY,
-            codigo_carretera VARCHAR(20),
+            codigo_carretera VARCHAR(50),
             pk NUMERIC(6,2),
             fallecidos_30d INT DEFAULT 0,
             heridos_graves INT DEFAULT 0,
             heridos_leves INT DEFAULT 0,
             peso_severidad FLOAT,
-            geom GEOMETRY(Point, 4326)
+            geom GEOMETRY(Point, 4326),
+            anio INT,
+            tipo_accidente VARCHAR(100)
         );
         
+        ALTER TABLE accidentes ADD COLUMN IF NOT EXISTS anio INT;
+        ALTER TABLE accidentes ADD COLUMN IF NOT EXISTS tipo_accidente VARCHAR(100);
+
         CREATE INDEX IF NOT EXISTS idx_accidentes_geom ON accidentes USING GIST(geom);
+        CREATE INDEX IF NOT EXISTS idx_accidentes_anio ON accidentes(anio);
     """)
-    
-    # Insertar datos simulados de prueba si la tabla está vacía (puntos alrededor de Madrid)
-    count = await conn.fetchval("SELECT COUNT(*) FROM accidentes")
-    if count == 0:
-        await conn.execute("""
-            INSERT INTO accidentes (codigo_carretera, pk, fallecidos_30d, heridos_graves, heridos_leves, peso_severidad, geom)
-            VALUES 
-            ('A-6', 15.2, 1, 2, 0, 16.0, ST_SetSRID(ST_MakePoint(-3.7654, 40.4532), 4326)),
-            ('A-6', 16.0, 0, 1, 3, 6.0, ST_SetSRID(ST_MakePoint(-3.7710, 40.4580), 4326)),
-            ('A-1', 20.5, 2, 0, 1, 21.0, ST_SetSRID(ST_MakePoint(-3.6210, 40.5410), 4326)),
-            ('M-30', 5.0, 0, 0, 2, 2.0, ST_SetSRID(ST_MakePoint(-3.6700, 40.4300), 4326));
-        """)
     await conn.close()
+
 
 class RoutePayload(BaseModel):
     geojson_geometry: dict
     buffer_meters: float = 100.0
 
+
+class RouteRequest(BaseModel):
+    coordinates: List[List[float]]
+
+
 @app.get("/")
 async def serve_index():
     return FileResponse("static/index.html")
+
 
 @app.get("/api/v1/accidentes/bbox")
 async def get_accidentes_por_bbox(
@@ -94,13 +118,14 @@ async def get_accidentes_por_bbox(
             "properties": {
                 "id": r["id"],
                 "carretera": r["codigo_carretera"],
-                "pk": float(r["pk"]),
+                "pk": float(r["pk"]) if r["pk"] else 0.0,
                 "weight": r["peso_severidad"]
             }
         }
         for r in rows
     ]
     return {"type": "FeatureCollection", "features": features}
+
 
 @app.post("/api/v1/siniestralidad-ruta")
 async def calcular_siniestralidad_ruta(payload: RoutePayload):
@@ -140,9 +165,6 @@ async def calcular_siniestralidad_ruta(payload: RoutePayload):
         }
     }
 
-class RouteRequest(BaseModel):
-    # Lista de coordenadas [longitude, latitude] de la ruta
-    coordinates: List[List[float]]
 
 @app.post("/api/v1/rutas/analizar")
 async def analizar_riesgo_ruta(req: RouteRequest):
@@ -154,8 +176,8 @@ async def analizar_riesgo_ruta(req: RouteRequest):
 
     conn = await asyncpg.connect(DB_DSN)
     
-    # Consultar totales acumulados y contar el número de años analizados
-    query = """
+    # 1. Totales acumulados e índice de severidad
+    query_totales = """
         SELECT 
             COUNT(*) AS total_accidentes,
             COALESCE(SUM(fallecidos_30d), 0) AS total_fallecidos,
@@ -170,8 +192,24 @@ async def analizar_riesgo_ruta(req: RouteRequest):
             0.005
         );
     """
-    
-    row = await conn.fetchrow(query, wkt_line)
+    row = await conn.fetchrow(query_totales, wkt_line)
+
+    # 2. Causa principal predominante
+    query_causa = """
+        SELECT tipo_accidente, COUNT(*) as cantidad
+        FROM accidentes
+        WHERE ST_DWithin(
+            geom, 
+            ST_GeomFromText($1, 4326), 
+            0.005
+        ) 
+          AND tipo_accidente IS NOT NULL 
+          AND tipo_accidente NOT IN ('Desconocido', '0', '')
+        GROUP BY tipo_accidente
+        ORDER BY cantidad DESC
+        LIMIT 1;
+    """
+    causa_row = await conn.fetchrow(query_causa, wkt_line)
     await conn.close()
 
     total_acc = row["total_accidentes"]
@@ -181,15 +219,25 @@ async def analizar_riesgo_ruta(req: RouteRequest):
     riesgo_total = float(row["indice_riesgo_total"])
     num_anios = max(row["num_anios"] or 1, 1)
 
-    # Riesgo promedio anual en el tramo
     riesgo_anual = riesgo_total / num_anios
 
-    # Clasificación basada en el promedio anual de la ruta
     nivel_riesgo = "Bajo"
     if riesgo_anual > 30:
         nivel_riesgo = "Alto"
     elif riesgo_anual > 10:
         nivel_riesgo = "Medio"
+
+    # Traducir el código numérico o devolver el valor tal cual si ya venía formateado
+    causa_raw = str(causa_row["tipo_accidente"]).strip() if causa_row else ""
+    # Por si vienen decimales:
+    if causa_raw.endswith(".0"):
+        causa_raw = causa_raw[:-2]
+    elif "." in causa_raw:
+        try:
+            causa_raw = str(int(float(causa_raw)))
+        except ValueError:
+            pass
+    causa_principal = TIPO_ACCIDENTE_MAP.get(causa_raw, causa_raw if causa_raw else "No especificada")
 
     return {
         "resumen": {
@@ -198,6 +246,7 @@ async def analizar_riesgo_ruta(req: RouteRequest):
             "fallecidos_acumulados": fallecidos,
             "heridos_graves_acumulados": graves,
             "heridos_leves_acumulados": leves,
+            "causa_principal": causa_principal,
             "indice_riesgo_anual_promedio": round(riesgo_anual, 2),
             "nivel_riesgo": nivel_riesgo
         }
