@@ -84,7 +84,7 @@
         <p>💀 Fallecidos: <strong id="val-fallecidos">0</strong></p>
         <p>🏥 Heridos Graves: <strong id="val-graves">0</strong></p>
         <p>🚗 Causa Principal: <strong id="val-causa">-</strong></p>
-        <p>📊 Índice de Riesgo Anual: <strong id="val-indice">0</strong></p>
+        <p>📊 Índice de Riesgo: <strong id="val-indice">0</strong></p>
     </div>
 </div>
 
@@ -240,7 +240,7 @@
             document.getElementById('val-fallecidos').innerText = resumen.fallecidos_acumulados || 0;
             document.getElementById('val-graves').innerText = resumen.heridos_graves_acumulados || 0;
             document.getElementById('val-causa').innerText = resumen.causa_principal || 'No especificada';
-            document.getElementById('val-indice').innerText = resumen.indice_riesgo_anual_promedio || 0;
+            document.getElementById('val-indice').innerText = resumen.indice_riesgo_anual_km || 0;
 
             const badge = document.getElementById('badge-riesgo');
             badge.innerText = resumen.nivel_riesgo;

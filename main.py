@@ -176,21 +176,23 @@ async def analizar_riesgo_ruta(req: RouteRequest):
 
     conn = await asyncpg.connect(DB_DSN)
     
-    # 1. Totales acumulados e índice de severidad
+    # 1. Totales acumulados, número de años y longitud exacta del trazado en km vía PostGIS
     query_totales = """
+        WITH ruta_geom AS (
+            SELECT ST_GeomFromText($1, 4326) AS geom
+        )
         SELECT 
-            COUNT(*) AS total_accidentes,
-            COALESCE(SUM(fallecidos_30d), 0) AS total_fallecidos,
-            COALESCE(SUM(heridos_graves), 0) AS total_graves,
-            COALESCE(SUM(heridos_leves), 0) AS total_leves,
-            COALESCE(SUM(peso_severidad), 0) AS indice_riesgo_total,
-            COUNT(DISTINCT anio) AS num_anios
-        FROM accidentes
-        WHERE ST_DWithin(
-            geom, 
-            ST_GeomFromText($1, 4326), 
-            0.005
-        );
+            COUNT(a.id) AS total_accidentes,
+            COALESCE(SUM(a.fallecidos_30d), 0) AS total_fallecidos,
+            COALESCE(SUM(a.heridos_graves), 0) AS total_graves,
+            COALESCE(SUM(a.heridos_leves), 0) AS total_leves,
+            COALESCE(SUM(a.peso_severidad), 0) AS indice_riesgo_total,
+            COUNT(DISTINCT a.anio) AS num_anios,
+            -- Cálculo de la distancia real sobre el elipsoide terrestre en kilómetros
+            ST_Length(rg.geom::geography) / 1000.0 AS longitud_km
+        FROM ruta_geom rg
+        LEFT JOIN accidentes a ON ST_DWithin(a.geom, rg.geom, 0.005)
+        GROUP BY rg.geom;
     """
     row = await conn.fetchrow(query_totales, wkt_line)
 
@@ -218,18 +220,20 @@ async def analizar_riesgo_ruta(req: RouteRequest):
     leves = row["total_leves"]
     riesgo_total = float(row["indice_riesgo_total"])
     num_anios = max(row["num_anios"] or 1, 1)
+    longitud_km = max(float(row["longitud_km"] or 0.1), 0.1)
 
-    riesgo_anual = riesgo_total / num_anios
+    # Cálculo normalizado: Densidad de riesgo por año y por kilómetro de carretera
+    riesgo_anual_km = (riesgo_total / num_anios) / longitud_km
 
+    # Umbrales ajustados a la densidad por km (Riesgo Colectivo Relativo)
     nivel_riesgo = "Bajo"
-    if riesgo_anual > 30:
+    if riesgo_anual_km > 2.0:
         nivel_riesgo = "Alto"
-    elif riesgo_anual > 10:
+    elif riesgo_anual_km > 0.5:
         nivel_riesgo = "Medio"
 
     # Traducir el código numérico o devolver el valor tal cual si ya venía formateado
     causa_raw = str(causa_row["tipo_accidente"]).strip() if causa_row else ""
-    # Por si vienen decimales:
     if causa_raw.endswith(".0"):
         causa_raw = causa_raw[:-2]
     elif "." in causa_raw:
@@ -237,17 +241,19 @@ async def analizar_riesgo_ruta(req: RouteRequest):
             causa_raw = str(int(float(causa_raw)))
         except ValueError:
             pass
+
     causa_principal = TIPO_ACCIDENTE_MAP.get(causa_raw, causa_raw if causa_raw else "No especificada")
 
     return {
         "resumen": {
+            "longitud_ruta_km": round(longitud_km, 2),
             "periodo_anos_analizados": num_anios,
             "total_accidentes_acumulados": total_acc,
             "fallecidos_acumulados": fallecidos,
             "heridos_graves_acumulados": graves,
             "heridos_leves_acumulados": leves,
             "causa_principal": causa_principal,
-            "indice_riesgo_anual_promedio": round(riesgo_anual, 2),
+            "indice_riesgo_anual_km": round(riesgo_anual_km, 2),
             "nivel_riesgo": nivel_riesgo
         }
     }
