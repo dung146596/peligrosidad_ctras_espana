@@ -36,10 +36,10 @@ Donde $M$ es el total de accidentes acumulados a lo largo del trayecto.
 
 ---
 ### Ejemplo 1 de análisis de riesgo en ruta:
-![Mapa de calor de accidentalidad vial](img/sample_1.png)
+![Mapa de calor de accidentalidad vial](img/sample_1.jpg)
 
 ### Ejemplo 2 de análisis de riesgo en ruta:
-![Análisis de riesgo en ruta](img/sample_2.png)
+![Análisis de riesgo en ruta](img/sample_2.jpg)
 
 ---
 
