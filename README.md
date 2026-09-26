@@ -35,6 +35,13 @@ Donde $M$ es el total de accidentes acumulados a lo largo del trayecto.
 * 🔴 **Alto:** $R_{\text{anual}} > 30$
 
 ---
+### Mapa de Calor de Peligrosidad Vial
+![Mapa de calor de accidentalidad vial](img/captura_mapa.png)
+
+### Análisis de Riesgo en Ruta
+![Análisis de riesgo en ruta](img/captura_ruta.png)
+
+---
 
 ## 🛠️ Arquitectura y Funcionamiento General
 
@@ -87,7 +94,7 @@ Este proyecto hace uso de datos abiertos, APIS y servicios públicos proporciona
 
 3. **Descargar y meter archivos de datos:**
     Omitidos en el repo por cuestiones de tamaño de ficheros.
-    
+
     Capa Geográfica de la Red Viaria (IGN / CNIG):
     * **Fuente:** Centro de Descargas del CNIG ([cnig.es](https://www.cnig.es/)).
     * **Producto:** Red Transportes (Información Geográfica de Referencia).
