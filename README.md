@@ -117,5 +117,10 @@ Este proyecto hace uso de datos abiertos, APIS y servicios públicos proporciona
     uvicorn main:app --reload
 Accede a la aplicación en http://localhost:8000.
 
+### Exención de responsabilidad
+Este proyecto ha sido desarrollado exclusivamente con fines educativos y didácticos. Una parte significativa del código ha sido generada con asistencia de herramientas de inteligencia artificial.
+
+El proyecto se proporciona con fines informativos y educativos. El autor no se responsabiliza del uso, interpretación, modificación o aplicación del código por parte de terceros.
+
 ### Licencia
 Este proyecto está distribuido bajo la Licencia MIT. Consulta el archivo LICENSE para más detalles.
