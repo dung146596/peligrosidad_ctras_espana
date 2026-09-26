@@ -35,11 +35,11 @@ Donde $M$ es el total de accidentes acumulados a lo largo del trayecto.
 * 🔴 **Alto:** $R_{\text{anual}} > 30$
 
 ---
-### Mapa de Calor de Peligrosidad Vial
-![Mapa de calor de accidentalidad vial](img/captura_mapa.png)
+### Ejemplo 1 de análisis de riesgo en ruta:
+![Mapa de calor de accidentalidad vial](img/sample_1.png)
 
-### Análisis de Riesgo en Ruta
-![Análisis de riesgo en ruta](img/captura_ruta.png)
+### Ejemplo 2 de análisis de riesgo en ruta:
+![Análisis de riesgo en ruta](img/sample_2.png)
 
 ---
 
