@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Riesgo Vial y Analizador de Rutas</title>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .panel-rutas {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 320px;
+            transition: all 0.3s ease-in-out;
+            box-sizing: border-box;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-rutas h2 { margin: 0; font-size: 18px; color: #333; }
+        
+        .btn-toggle {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ccc;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .btn-toggle:hover { background: #e0e0e0; }
+
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 4px; color: #555; }
+        .input-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+
+        .btn-primary {
+            width: 100%;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-primary:hover { background-color: #004c99; }
+
+        #resumen-ruta {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            display: none;
+        }
+
+        .metric-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+            font-size: 12px;
+        }
+
+        .riesgo-Bajo { background-color: #2e7d32; }
+        .riesgo-Medio { background-color: #f57c00; }
+        .riesgo-Alto { background-color: #c62828; }
+
+        /* Adaptación responsiva para móviles */
+        @media (max-width: 480px) {
+            .panel-rutas {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                width: auto;
+                max-height: 85vh;
+                overflow-y: auto;
+                padding: 15px;
+            }
+        }
+
+        /* Clase aplicada al minimizar el panel */
+        .panel-rutas.minimized .panel-body {
+            display: none;
+        }
+
+        /* Estilos para el Modal de Exención de Responsabilidad */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(3px);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .modal-content {
+            background: #ffffff;
+            border-radius: 12px;
+            max-width: 520px;
+            width: 100%;
+            padding: 28px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            animation: modalFadeIn 0.3s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            color: #d32f2f;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modal-content p {
+            color: #444;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+
+        .modal-btn {
+            background-color: #2e7d32;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .modal-btn:hover { background-color: #1b5e20; }
+    </style>
+</head>
+<body>
+
+<!-- Pop-up Exención de Responsabilidad -->
+<div id="disclaimer-modal" class="modal-overlay">
+    <div class="modal-content">
+        <h3>⚠️ Exención de responsabilidad</h3>
+        <p>Este proyecto ha sido desarrollado exclusivamente con fines educativos y didácticos. Una parte significativa del código ha sido generada con asistencia de herramientas de inteligencia artificial.</p>
+        <p>El proyecto se proporciona con fines informativos y educativos. El autor no se responsabiliza del uso, interpretación, modificación o aplicación del código por parte de terceros.</p>
+        <button class="modal-btn" onclick="cerrarDisclaimer()">Entendido y Aceptar</button>
+    </div>
+</div>
+
+<div class="panel-rutas" id="panel-rutas">
+    <div class="panel-header">
+        <h2>🗺️ Analizador de Riesgo</h2>
+        <button class="btn-toggle" onclick="togglePanel()" id="btn-toggle" title="Minimizar / Expandir panel">➖</button>
+    </div>
+    
+    <div class="panel-body">
+        <p style="font-size: 12px; color: #666; margin-top: 8px;">Estimación de riesgo en la red viaria con datos oficiales de la DGT (2020-2024).</p>
+        
+        <div class="input-group">
+            <label>Origen</label>
+            <input type="text" id="origen" placeholder="Ej: Madrid" value="Madrid">
+        </div>
+        <div class="input-group">
+            <label>Destino</label>
+            <input type="text" id="destino" placeholder="Ej: Valencia" value="Valencia">
+        </div>
+        <button class="btn-primary" onclick="calcularRuta()">Calcular y Analizar Riesgo</button>
+
+        <div id="resumen-ruta">
+            <h3>Resultado del Análisis</h3>
+            <p>Nivel de Riesgo: <span id="badge-riesgo" class="metric-badge"></span></p>
+            <p>🛣️ Longitud: <strong id="val-distancia">0</strong> km</p>
+            <p>⚠️ Accidentes cercanos: <strong id="val-accidentes">0</strong></p>
+            <p>💀 Fallecidos: <strong id="val-fallecidos">0</strong></p>
+            <p>🏥 Heridos Graves: <strong id="val-graves">0</strong></p>
+            <p>🚗 Causa Principal: <strong id="val-causa">-</strong></p>
+            <p>📊 Riesgo Anual/km: <strong id="val-indice">0</strong></p>
+        </div>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    function cerrarDisclaimer() {
+        document.getElementById('disclaimer-modal').style.display = 'none';
+    }
+
+    function togglePanel() {
+        const panel = document.getElementById('panel-rutas');
+        const btn = document.getElementById('btn-toggle');
+        panel.classList.toggle('minimized');
+        btn.innerText = panel.classList.contains('minimized') ? '➕' : '➖';
+    }
+
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        center: [-3.7037, 40.4167],
+        zoom: 6
+    });
+
+    map.on('load', () => {
+        // Fuente GeoJSON de accidentes
+        map.addSource('accidentes', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        // Capa de Mapa de Calor optimizada para continuidad y rango visual amplio
+        map.addLayer({
+            id: 'accidentes-heat',
+            type: 'heatmap',
+            source: 'accidentes',
+            paint: {
+                'heatmap-weight': [
+                    'interpolate', ['linear'], ['get', 'weight'],
+                    0, 0,
+                    20, 1
+                ],
+                'heatmap-intensity': [
+                    'interpolate', ['linear'], ['zoom'],
+                    5, 0.8,
+                    12, 1.8
+                ],
+                'heatmap-color': [
+                    'interpolate', ['linear'], ['heatmap-density'],
+                    0, 'rgba(0, 0, 0, 0)',
+                    0.1, 'rgba(46, 204, 113, 0.45)',  
+                    0.35, 'rgba(241, 196, 15, 0.75)',  
+                    0.65, 'rgba(230, 126, 34, 0.85)',  
+                    1.0, 'rgba(231, 76, 60, 0.95)'     
+                ],
+                'heatmap-radius': [
+                    'interpolate', ['linear'], ['zoom'],
+                    4, 12,
+                    8, 22,
+                    14, 42
+                ]
+            }
+        });
+
+        // Capa para trazar la línea de la ruta
+        map.addSource('ruta-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        map.addLayer({
+            id: 'layer-ruta',
+            type: 'line',
+            source: 'ruta-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: {
+                'line-color': '#0066ff',
+                'line-width': 5,
+                'line-opacity': 0.8
+            }
+        });
+
+        map.on('moveend', actualizarMapaCalor);
+        actualizarMapaCalor();
+    });
+
+    async function actualizarMapaCalor() {
+        const bounds = map.getBounds();
+        //const url = `/api/v1/accidentes/bbox?min_lon=${bounds.getWest()}&min_lat=${bounds.getSouth()}&max_lon=${bounds.getEast()}&max_lat=${bounds.getNorth()}`;
+        const url = `https://peligrosidad-ctras-espana.onrender.com/api/v1/accidentes/bbox?min_lon=${bounds.getWest()}&min_lat=${bounds.getSouth()}&max_lon=${bounds.getEast()}&max_lat=${bounds.getNorth()}`;
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (map.getSource('accidentes')) {
+                map.getSource('accidentes').setData(data);
+            }
+        } catch (err) {
+            console.error("Error al cargar accidentes:", err);
+        }
+    }
+
+    async function geocodificar(lugar) {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(lugar + ', España')}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data && data.length > 0) {
+            return [parseFloat(data[0].lon), parseFloat(data[0].lat)];
+        }
+        throw new Error(`No se pudo encontrar el lugar: ${lugar}`);
+    }
+
+    async function calcularRuta() {
+        const txtOrigen = document.getElementById('origen').value;
+        const txtDestino = document.getElementById('destino').value;
+
+        try {
+            const coordsOrigen = await geocodificar(txtOrigen);
+            const coordsDestino = await geocodificar(txtDestino);
+
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordsOrigen[0]},${coordsOrigen[1]};${coordsDestino[0]},${coordsDestino[1]}?overview=full&geometries=geojson`;
+            const osrmRes = await fetch(osrmUrl);
+            const osrmData = await osrmRes.json();
+
+            if (!osrmData.routes || osrmData.routes.length === 0) {
+                alert("No se pudo encontrar una ruta entre ambos puntos.");
+                return;
+            }
+
+            const routeGeoJSON = osrmData.routes[0].geometry;
+
+            map.getSource('ruta-source').setData({
+                type: 'Feature',
+                geometry: routeGeoJSON
+            });
+
+            const coords = routeGeoJSON.coordinates;
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            map.fitBounds([
+                [Math.min(...lons), Math.min(...lats)],
+                [Math.max(...lons), Math.max(...lats)]
+            ], { padding: 50 });
+
+            //const backendRes = await fetch('/api/v1/rutas/analizar', {
+            const backendRes = await fetch('https://peligrosidad-ctras-espana.onrender.com/api/v1/rutas/analizar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ coordinates: coords })
+            });
+
+            const resultado = await backendRes.json();
+            const resumen = resultado.resumen;
+
+            document.getElementById('val-distancia').innerText = resumen.longitud_ruta_km || 0;
+            document.getElementById('val-accidentes').innerText = resumen.total_accidentes_acumulados || 0;
+            document.getElementById('val-fallecidos').innerText = resumen.fallecidos_acumulados || 0;
+            document.getElementById('val-graves').innerText = resumen.heridos_graves_acumulados || 0;
+            document.getElementById('val-causa').innerText = resumen.causa_principal || 'No especificada';
+            document.getElementById('val-indice').innerText = resumen.indice_riesgo_anual_km || 0;
+
+            const badge = document.getElementById('badge-riesgo');
+            badge.innerText = resumen.nivel_riesgo;
+            badge.className = `metric-badge riesgo-${resumen.nivel_riesgo}`;
+
+            document.getElementById('resumen-ruta').style.display = 'block';
+
+        } catch (err) {
+            alert(err.message || "Error al calcular la ruta.");
+            console.error(err);
+        }
+    }
+</script>
+
+</body>
+</html>
