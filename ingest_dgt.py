@@ -30,10 +30,14 @@ PROV_BBOX = {
     '11': (35.8, -6.6, 36.8, -5.1),
     '15': (42.7, -9.3, 43.8, -6.5),
     '27': (41.8, -7.1, 43.8, -6.5),
+    '28': (39.8, -4.6, 41.2, -3.0),  # Madrid
     '32': (41.8, -8.4, 42.5, -6.7),
     '33': (42.8, -7.2, 43.7, -4.4),
+    '35': (27.5, -15.9, 28.3, -13.3), # Las Palmas
     '36': (41.8, -8.9, 42.2, -8.3),
     '39': (43.0, -4.9, 43.6, -3.2),
+    '44': (39.7, -1.6, 41.3, 0.3),   # Teruel
+    '45': (39.2, -5.5, 40.3, -3.0),  # Toledo
 }
 
 # Mapeo de códigos INE de provincia a prefijos de carreteras autonómicas/provinciales
@@ -43,9 +47,13 @@ PROV_PREFIJOS = {
     '11': ['CA', 'A'],        # Cádiz
     '15': ['AC', 'DP'],       # A Coruña
     '27': ['LU'],             # Lugo
-    '36': ['PO'],             # Pontevedra
+    '28': ['M', 'M30', 'M40'], # Madrid
     '32': ['OU'],             # Ourense
+    '35': ['GC', 'LZ', 'FVT'],# Las Palmas (Gran Canaria, Lanzarote, Fuerteventura)
+    '36': ['PO'],             # Pontevedra
     '39': ['CA', 'S'],        # Cantabria
+    '44': ['TE'],             # Teruel
+    '45': ['TO', 'CM'],       # Toledo / Castilla-La Mancha
 }
 
 
@@ -62,7 +70,7 @@ def normalizar_carretera(val):
         return ""
     s = str(val).replace("-", "").replace(" ", "").strip().upper()
     limpio = re.sub(r'[^A-Z0-9]', '', s)
-    # Convertir formatos como AS014 a AS14
+    # Convertir formatos como AS014 a AS14 o M030 a M30
     return re.sub(r'([A-Z]+)0*(\d+)', r'\1\2', limpio)
 
 
@@ -85,7 +93,6 @@ def candidatos_carretera(carretera, provincia=None):
 def limpiar_pk(val):
     try:
         val_str = str(val).replace(",", ".").strip()
-        # Extraer solo la parte numérica
         match = re.search(r'\d+(\.\d+)?', val_str)
         if match:
             return round(float(match.group(0)))
@@ -184,7 +191,7 @@ def punto_osm_para_pk(linea, pk, pk_min, pk_max):
 
 async def cargar_microdatos_dgt_anio(
     csv_path: str,
-    gpkg_path: str,
+    gpkg_dir: str,
     anio: int,
     pk_data_cache: tuple = None
 ):
@@ -195,7 +202,6 @@ async def cargar_microdatos_dgt_anio(
     except UnicodeDecodeError:
         df = pd.read_csv(csv_path, sep=';', low_memory=False, encoding='latin1')
 
-    # Identificar columna de PK/KM
     col_km = next((c for c in df.columns if c.upper() in ['KM', 'PK', 'PUNTO_KILOMETRICO']), None)
     if not col_km:
         print(f"⚠️ No se encontró columna de PK en {csv_path}")
@@ -208,52 +214,70 @@ async def cargar_microdatos_dgt_anio(
 
     df['PESO_SEVERIDAD'] = df.apply(calcular_peso_severidad, axis=1)
 
-    # 1. Cargar las capas de PK disponibles si no están en caché
+    # 1. Cargar dinámicamente TODOS los archivos .gpkg de la carpeta 'geopackage/'
     if pk_data_cache is None:
         pk_map = {}
-        # Diccionario secundario agrupado por carretera: { 'AS14': { 1: (lon, lat), 2: (lon, lat) } }
         vial_pks = {}
 
-        fuentes_pk = [(gpkg_path, 'rt_ppkk_p')]
-        asturias_path = os.path.join(os.path.dirname(gpkg_path), 'red_viaria_asturias.gpkg')
-        if os.path.exists(asturias_path):
-            fuentes_pk.append((asturias_path, 'rt_portalpk_p'))
+        if not os.path.exists(gpkg_dir):
+            print(f"❌ La carpeta '{gpkg_dir}' no existe.")
+            return None
 
-        for fuente_path, capa in fuentes_pk:
-            capas = gpd.list_layers(fuente_path)['name'].tolist()
-            if capa not in capas:
+        # Escanear todos los ficheros .gpkg
+        archivos_gpkg = [
+            os.path.join(gpkg_dir, f) for f in os.listdir(gpkg_dir)
+            if f.lower().endswith('.gpkg')
+        ]
+
+        print(f"🔍 Detectados {len(archivos_gpkg)} archivos GeoPackage en '{gpkg_dir}'.")
+
+        for fuente_path in archivos_gpkg:
+            try:
+                capas_disponibles = gpd.list_layers(fuente_path)['name'].tolist()
+            except Exception as e:
+                print(f"⚠️ No se pudieron leer las capas de {fuente_path}: {e}")
                 continue
 
-            print(f"📍 Cargando capa '{capa}' de {fuente_path}...")
-            pks_gdf = gpd.read_file(fuente_path, layer=capa, engine="pyogrio")
+            # Buscar capas que contengan puntos kilométricos
+            capas_pk = [c for c in capas_disponibles if any(term in c.lower() for term in ['ppkk', 'portalpk', 'puntos_k', 'pk'])]
 
-            if pks_gdf.crs and pks_gdf.crs.to_epsg() != 4326:
-                pks_gdf = pks_gdf.to_crs(epsg=4326)
-
-            # Extraer campos de carreteras y PK. La distribución provincial
-            # usa rt_portalpk_p en lugar de rt_ppkk_p.
-            pks_gdf['carr_nombre'] = pks_gdf['nombre'].fillna('').apply(normalizar_carretera)
-            pks_gdf['carr_rotulo'] = pks_gdf['rotulo'].fillna('').apply(normalizar_carretera) if 'rotulo' in pks_gdf.columns else ""
-            pks_gdf['pk_num'] = pks_gdf['numero'].apply(limpiar_pk)
-
-            for _, row in pks_gdf.iterrows():
-                if pd.isna(row['pk_num']) or row.geometry is None:
+            for capa in capas_pk:
+                print(f"📍 Cargando capa '{capa}' de {os.path.basename(fuente_path)}...")
+                try:
+                    pks_gdf = gpd.read_file(fuente_path, layer=capa, engine="pyogrio")
+                except Exception as e:
+                    print(f"⚠️ Error al leer capa '{capa}' en {fuente_path}: {e}")
                     continue
 
-                pk = int(row['pk_num'])
-                coords = (row.geometry.x, row.geometry.y)
+                if pks_gdf.crs and pks_gdf.crs.to_epsg() != 4326:
+                    pks_gdf = pks_gdf.to_crs(epsg=4326)
 
-                # Probar los nombres/rótulos posibles de la vía
-                nombres_posibles = set(filter(None, [row['carr_nombre'], row['carr_rotulo']]))
+                # Identificar nombres de columnas dinámicamente
+                col_nombre = next((c for c in pks_gdf.columns if c.lower() in ['nombre', 'carr_nom', 'carretera', 'via']), None)
+                col_rotulo = next((c for c in pks_gdf.columns if c.lower() in ['rotulo', 'denominacion', 'codigo', 'ref']), None)
+                col_numero = next((c for c in pks_gdf.columns if c.lower() in ['numero', 'pk', 'pk_num', 'km']), None)
 
-                for v in nombres_posibles:
-                    pk_map[(v, pk)] = coords
-                    if v not in vial_pks:
-                        vial_pks[v] = {}
-                    if pk not in vial_pks[v]:
-                        vial_pks[v][pk] = coords
+                pks_gdf['carr_nombre'] = pks_gdf[col_nombre].fillna('').apply(normalizar_carretera) if col_nombre else ""
+                pks_gdf['carr_rotulo'] = pks_gdf[col_rotulo].fillna('').apply(normalizar_carretera) if col_rotulo else ""
+                pks_gdf['pk_num'] = pks_gdf[col_numero].apply(limpiar_pk) if col_numero else None
 
-        print(f"🗺️ Base de PKs lista con {len(pk_map)} combinación(es) directa(s).")
+                for _, row in pks_gdf.iterrows():
+                    if pd.isna(row['pk_num']) or row.geometry is None:
+                        continue
+
+                    pk = int(row['pk_num'])
+                    coords = (row.geometry.x, row.geometry.y)
+
+                    nombres_posibles = set(filter(None, [row['carr_nombre'], row['carr_rotulo']]))
+
+                    for v in nombres_posibles:
+                        pk_map[(v, pk)] = coords
+                        if v not in vial_pks:
+                            vial_pks[v] = {}
+                        if pk not in vial_pks[v]:
+                            vial_pks[v][pk] = coords
+
+        print(f"🗺️ Base de PKs unificada lista con {len(pk_map)} combinación(es) directa(s).")
         pk_data_cache = (pk_map, vial_pks, cargar_cache_osm())
 
     pk_map, vial_pks, osm_cache = pk_data_cache
@@ -293,14 +317,13 @@ async def cargar_microdatos_dgt_anio(
 
         coords = None
 
-        # Estrategia 1: coincidencia exacta con cualquier alias de carretera.
+        # Estrategia 1: Coincidencia exacta con cualquier alias
         for candidato in candidatos:
             if (candidato, pk) in pk_map:
                 coords = pk_map[(candidato, pk)]
                 break
 
-        # Estrategia 2: usar el PK disponible más cercano. La tolerancia amplia
-        # es deliberada: esta aplicación tiene finalidad didáctica.
+        # Estrategia 2: Usar el PK disponible más cercano
         if not coords:
             mejores_opciones = []
             for candidato in candidatos:
@@ -313,7 +336,7 @@ async def cargar_microdatos_dgt_anio(
             if mejores_opciones:
                 coords = min(mejores_opciones, key=lambda opcion: opcion[0])[1]
 
-        # Estrategia 3: geometría OSM para carreteras registradas sin geometría local.
+        # Estrategia 3: Geometría OSM de respaldo
         if not coords and cod_norm != 'NOINVENTARIADA' and provincia is not None:
             provincia_norm = str(provincia).split('.')[0].zfill(2)
             rango = rangos_pk.get((provincia_norm, cod_norm))
@@ -350,7 +373,7 @@ async def cargar_microdatos_dgt_anio(
     print(f"  └─ Geolocalizados {encontrados} de {len(df)} accidentes.")
     if carreteras_no_geolocalizadas:
         resumen = sorted(carreteras_no_geolocalizadas.items(), key=lambda item: item[1], reverse=True)[:10]
-        print(f"  └─ Sin geometría IGN (top 10): {resumen}")
+        print(f"  └─ Sin geometría IGN/Local (top 10): {resumen}")
 
     conn = await asyncpg.connect(DB_DSN)
 
@@ -379,7 +402,7 @@ async def cargar_microdatos_dgt_anio(
 
 
 async def main():
-    gpkg_path = "geopackage/rt_viaria.gpkg"
+    gpkg_dir = "geopackage"
 
     archivos_historicos = {
         2020: "TABLA_ACCIDENTES_20.csv",
@@ -395,7 +418,7 @@ async def main():
         if os.path.exists(path):
             pk_cache = await cargar_microdatos_dgt_anio(
                 path,
-                gpkg_path,
+                gpkg_dir,
                 anio,
                 pk_cache
             )
