@@ -30,9 +30,9 @@ $$R = \frac{\sum_{i=1}^{M} S_i}{N_{\text{años}}\cdot d_{\text{km}}}$$
 Donde $M$ es el total de accidentes acumulados a lo largo del trayecto.
 
 #### Criterios de Clasificación de Riesgo en Ruta
-* 🟢 **Bajo:** $R_{\text{anual}} \le 10$
-* 🟠 **Medio:** $10 < R_{\text{anual}} \le 30$
-* 🔴 **Alto:** $R_{\text{anual}} > 30$
+* 🟢 **Bajo:** $R \le 0.5$
+* 🟠 **Medio:** $0.5 < R \le 2$
+* 🔴 **Alto:** $R > 2$
 
 ---
 ### Ejemplo 1 de análisis de riesgo en ruta:
