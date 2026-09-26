@@ -23,9 +23,9 @@ Dado el trazado geométrico de una ruta de navegación $R$ (obtenida como una `L
 2. Se consultan mediante indexación espacial GiST en PostGIS (`ST_DWithin`) todos los accidentes históricos contenidos dentro de dicho área.
 
 ### 3. Índice de Riesgo Promedio Anual
-Para evitar la volatilidad estadística de años aislados y homogeneizar el riesgo independientemente del número de ejercicios analizados ($N_{\text{años}}$ en la muestra, ej. 2020–2024), se calcula el **Índice de Riesgo Anual Promedio** ($R_{\text{anual}}$):
+Para evitar la gran variabilidad entre años aislados y homogeneizar el riesgo independientemente del número de ejercicios analizados ($N_{\text{años}}$ en la muestra, ej. 2020–2024) y la distancia de la ruta ($d_{\text{km}}$), se calcula el **Índice de Riesgo Promedio** ($R$):
 
-$$R_{\text{anual}} = \frac{\sum_{i=1}^{M} S_i}{\max(1, N_{\text{años}})}$$
+$$R_{\text{anual}} = \frac{\sum_{i=1}^{M} S_i}{N_{\text{años}}\cdot d_{\text{km}}}$$
 
 Donde $M$ es el total de accidentes acumulados a lo largo del trayecto.
 
